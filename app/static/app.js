@@ -3,7 +3,7 @@ const SOURCE_OPTIONS = [
   { key: "clinicaltrials.gov", label: "ClinicalTrials.gov", checked: true },
   { key: "pubchem", label: "PubChem", checked: true },
 
-  // jump-off / helper sources
+  // jump-off/helper sources
   { key: "fda", label: "FDA", checked: true },
   { key: "who", label: "WHO", checked: true },
   { key: "ema", label: "EMA", checked: false },
@@ -18,7 +18,9 @@ let filteredResults = [];
 let displayLimit = 10;
 let selectedArticles = [];
 
-// ---------- helpers ----------
+// -----------------------------
+// Helpers
+// -----------------------------
 function escapeHtml(text) {
   return (text || "").replace(/[&<>"']/g, function (m) {
     return {
@@ -44,10 +46,10 @@ function getSelectedSources() {
 }
 
 function getKeywords() {
-  return document.getElementById("keywords").value
-    .split(",")
-    .map(v => v.trim())
-    .filter(Boolean);
+  const el = document.getElementById("keywords");
+  return el
+    ? el.value.split(",").map(v => v.trim()).filter(Boolean)
+    : [];
 }
 
 function buildJumpLink(source, compound, keywords) {
@@ -55,8 +57,13 @@ function buildJumpLink(source, compound, keywords) {
   return `https://www.google.com/search?q=${encodeURIComponent(query + " " + source)}`;
 }
 
+// -----------------------------
+// Source UI
+// -----------------------------
 function renderSources() {
   const box = document.getElementById("sources-box");
+  if (!box) return;
+
   box.innerHTML = SOURCE_OPTIONS.map(src => `
     <div class="form-check">
       <input
@@ -66,15 +73,21 @@ function renderSources() {
         id="src-${src.key}"
         ${src.checked ? "checked" : ""}
       >
-      <label class="form-check-label" for="src-${src.key}">${src.label}</label>
+      <label class="form-check-label" for="src-${src.key}">
+        ${src.label}
+      </label>
     </div>
   `).join("");
 }
 
+// -----------------------------
+// Filter UI
+// -----------------------------
 function updateSourceFilterOptions() {
   const select = document.getElementById("result-source-filter");
-  const current = select.value || "all";
+  if (!select) return;
 
+  const current = select.value || "all";
   const uniqueSources = [...new Set(allResults.map(r => r.source_database).filter(Boolean))].sort();
 
   select.innerHTML =
@@ -89,7 +102,8 @@ function updateSourceFilterOptions() {
 }
 
 function applyResultFilter() {
-  const source = document.getElementById("result-source-filter").value;
+  const select = document.getElementById("result-source-filter");
+  const source = select ? select.value : "all";
 
   filteredResults = source === "all"
     ? [...allResults]
@@ -98,12 +112,19 @@ function applyResultFilter() {
   renderResults();
 }
 
-// ---------- search / results ----------
+// -----------------------------
+// Search
+// -----------------------------
 async function runSearch(e) {
   e.preventDefault();
 
-  const compound = document.getElementById("compound").value.trim();
-  const keywords = document.getElementById("keywords").value.trim();
+  const compoundEl = document.getElementById("compound");
+  const keywordsEl = document.getElementById("keywords");
+  const resultMeta = document.getElementById("result-meta");
+  const resultsBox = document.getElementById("results");
+
+  const compound = compoundEl ? compoundEl.value.trim() : "";
+  const keywords = keywordsEl ? keywordsEl.value.trim() : "";
   const selectedSources = getSelectedSources();
 
   if (!compound) {
@@ -113,55 +134,73 @@ async function runSearch(e) {
 
   displayLimit = 10;
 
-  const res = await fetch("/api/search", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      compound,
-      keywords: keywords ? keywords.split(",").map(x => x.trim()) : [],
-      sources: ["pubmed", "clinicaltrials.gov", "pubchem"],
-      limit_per_source: 5
-    })
-  });
+  if (resultMeta) resultMeta.textContent = "Searching...";
+  if (resultsBox) resultsBox.innerHTML = `<div class="text-muted">Searching...</div>`;
 
-  const data = await res.json();
+  try {
+    const res = await fetch("/api/search", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({
+        compound,
+        keywords: keywords ? keywords.split(",").map(x => x.trim()) : [],
+        sources: ["pubmed", "clinicaltrials.gov", "pubchem"],
+        limit_per_source: 5
+      })
+    });
 
-  allResults = data.results || [];
+    const data = await res.json();
 
-  // add jump-off sources from the UI selection
-  selectedSources.forEach(src => {
-    if (!["pubmed","clinicaltrials.gov","pubchem"].includes(src)) {
-      allResults.push({
-        title: `Search ${src} for ${compound}`,
-        source_database: src,
-        snippet: "Jump-off link",
-        source_url: buildJumpLink(src, compound, keywords)
-      });
+    allResults = data.results || [];
+
+    // Add selected jump-off sources on top of real connector results
+    selectedSources.forEach(src => {
+      if (!["pubmed", "clinicaltrials.gov", "pubchem"].includes(src)) {
+        allResults.push({
+          title: `Search ${src} for ${compound}`,
+          source_database: src,
+          snippet: "Jump-off link",
+          source_url: buildJumpLink(src, compound, keywords)
+        });
+      }
+    });
+
+    updateSourceFilterOptions();
+    applyResultFilter();
+  } catch (err) {
+    if (resultMeta) resultMeta.textContent = "Search failed";
+    if (resultsBox) {
+      resultsBox.innerHTML = `<div class="text-danger">Search failed: ${escapeHtml(String(err))}</div>`;
     }
-  });
-
-  updateSourceFilterOptions();
-  applyResultFilter();
+  }
 }
 
+// -----------------------------
+// Results rendering
+// -----------------------------
 function renderResults() {
   const container = document.getElementById("results");
   const meta = document.getElementById("result-meta");
   const loadMoreBtn = document.getElementById("load-more-btn");
+
+  if (!container) return;
+
   const visible = filteredResults.slice(0, displayLimit);
 
-  meta.textContent = filteredResults.length
-    ? `${filteredResults.length} result(s)`
-    : "No search run yet.";
+  if (meta) {
+    meta.textContent = filteredResults.length
+      ? `${filteredResults.length} result(s)`
+      : "No search run yet.";
+  }
 
   if (!filteredResults.length) {
     container.innerHTML = `<div class="text-muted">Run a search to retrieve source links.</div>`;
-    loadMoreBtn.style.display = "none";
+    if (loadMoreBtn) loadMoreBtn.style.display = "none";
     return;
   }
 
   container.innerHTML = visible.map(item => {
-    const payload = encodeURIComponent(JSON.stringify(item));
+    const encoded = encodeURIComponent(JSON.stringify(item));
 
     return `
       <div class="result-card border rounded-3 p-3 mb-3 bg-white">
@@ -172,12 +211,10 @@ function renderResults() {
             <div class="small">${escapeHtml(item.snippet || "")}</div>
           </div>
           <div class="result-actions">
-            <a class="btn btn-sm btn-outline-primary" href="${item.source_url}" target="_blank" rel="noopener noreferrer">
-              Open article
-            </a>
+            ${item.source_url ? `<a class="btn btn-sm btn-outline-primary" href="${item.source_url}" target="_blank" rel="noopener noreferrer">Open article</a>` : ""}
             <button
               class="btn btn-sm btn-primary"
-              onclick="addToSelection(JSON.parse(decodeURIComponent('${payload}')))"
+              onclick="addEncodedSelection('${encoded}')"
               type="button"
             >
               Save to intake
@@ -188,26 +225,45 @@ function renderResults() {
     `;
   }).join("");
 
-  loadMoreBtn.style.display = filteredResults.length > displayLimit ? "inline-block" : "none";
+  if (loadMoreBtn) {
+    loadMoreBtn.style.display = filteredResults.length > displayLimit ? "inline-block" : "none";
+  }
 }
 
-// ---------- intake ----------
+function addEncodedSelection(encoded) {
+  try {
+    const item = JSON.parse(decodeURIComponent(encoded));
+    addToSelection(item);
+  } catch (err) {
+    alert("Could not add article to intake.");
+    console.error(err);
+  }
+}
+
+// -----------------------------
+// Intake selection
+// -----------------------------
 function addToSelection(item) {
-  const id = articleId(item);
+  const normalized = {
+    title: item.title || "Untitled",
+    source_database: item.source_database || "unknown",
+    source_url: item.source_url || "",
+    authors: item.authors || "",
+    journal: item.journal || "",
+    publication_year: item.publication_year || null,
+    doi: item.doi || null,
+    pmid: item.pmid || null,
+    nct_id: item.nct_id || null,
+    fda_identifier: item.fda_identifier || null,
+    pubchem_cid: item.pubchem_cid || null,
+    smiles: item.smiles || null,
+    snippet: item.snippet || ""
+  };
+
+  const id = articleId(normalized);
 
   if (!selectedArticles.some(a => articleId(a) === id)) {
-    selectedArticles.push({
-      title: item.title || "Untitled",
-      source_database: item.source_database || "unknown",
-      source_url: item.source_url || "",
-      authors: item.authors || "",
-      journal: item.journal || "",
-      publication_year: item.publication_year || null,
-      doi: item.doi || null,
-      pmid: item.pmid || null,
-      nct_id: item.nct_id || null,
-      snippet: item.snippet || ""
-    });
+    selectedArticles.push(normalized);
   }
 
   renderSelectedArticles();
@@ -215,8 +271,9 @@ function addToSelection(item) {
 
 function addManualLink() {
   const input = document.getElementById("manual-link");
-  const url = input.value.trim();
+  if (!input) return;
 
+  const url = input.value.trim();
   if (!url) {
     alert("Paste a URL first.");
     return;
@@ -232,6 +289,9 @@ function addManualLink() {
     doi: null,
     pmid: null,
     nct_id: null,
+    fda_identifier: null,
+    pubchem_cid: null,
+    smiles: null,
     snippet: "Manual URL added by reviewer"
   };
 
@@ -253,10 +313,14 @@ function removeFromSelection(id) {
 function clearSelection() {
   selectedArticles = [];
   renderSelectedArticles();
+
+  const summaryBox = document.getElementById("summary-output");
+  if (summaryBox) summaryBox.value = "";
 }
 
 function renderSelectedArticles() {
   const box = document.getElementById("selected-articles");
+  if (!box) return;
 
   if (!selectedArticles.length) {
     box.innerHTML = `<div class="text-muted">No articles selected yet.</div>`;
@@ -265,6 +329,7 @@ function renderSelectedArticles() {
 
   box.innerHTML = selectedArticles.map((a, i) => {
     const id = encodeURIComponent(articleId(a));
+
     return `
       <div class="border rounded-3 p-2 mb-2 bg-white">
         <div class="d-flex justify-content-between align-items-start gap-2">
@@ -274,9 +339,7 @@ function renderSelectedArticles() {
             <div class="small">${escapeHtml(a.source_url)}</div>
           </div>
           <div class="result-actions">
-            <a class="btn btn-sm btn-outline-primary" href="${a.source_url}" target="_blank" rel="noopener noreferrer">
-              Open article
-            </a>
+            ${a.source_url ? `<a class="btn btn-sm btn-outline-primary" href="${a.source_url}" target="_blank" rel="noopener noreferrer">Open article</a>` : ""}
             <button
               class="btn btn-sm btn-outline-danger"
               onclick="removeFromSelection(decodeURIComponent('${id}'))"
@@ -291,7 +354,9 @@ function renderSelectedArticles() {
   }).join("");
 }
 
-// ---------- save / summary ----------
+// -----------------------------
+// Persist intake to backend
+// -----------------------------
 function buildSourceBundle() {
   return selectedArticles.map(a =>
     [a.source_database || "", a.title || "", a.source_url || "", a.authors || ""].join(" | ")
@@ -299,10 +364,13 @@ function buildSourceBundle() {
 }
 
 async function saveIntake() {
-  const compound = document.getElementById("compound").value.trim();
-  const intakeTitle =
-    document.getElementById("intake-title").value.trim() ||
-    `${compound} evidence intake`;
+  const compoundEl = document.getElementById("compound");
+  const intakeTitleEl = document.getElementById("intake-title");
+
+  const compound = compoundEl ? compoundEl.value.trim() : "";
+  const intakeTitle = intakeTitleEl && intakeTitleEl.value.trim()
+    ? intakeTitleEl.value.trim()
+    : `${compound || "compound"} evidence intake`;
 
   if (!selectedArticles.length) {
     alert("Select or add at least one article first.");
@@ -310,7 +378,7 @@ async function saveIntake() {
   }
 
   const commonPayload = {
-    compound,
+    compound: compound || "unknown-compound",
     ich_m7_relevance: document.getElementById("ich-m7")?.value.trim() || null,
     toxicology_endpoint: document.getElementById("tox-endpoint")?.value.trim() || null,
     noael: document.getElementById("noael")?.value.trim() || null,
@@ -325,41 +393,51 @@ async function saveIntake() {
 
   try {
     for (const article of selectedArticles) {
+      // This is the critical fix:
+      // ensure the payload always has enough fields for the backend to store a row.
       const payload = {
         ...commonPayload,
         title: article.title || intakeTitle,
-        source_database: article.source_database || "mixed-sources",
-        source_url: article.source_url || null,
-        authors: article.authors || null,
-        journal: article.journal || null,
+        source_database: article.source_database || "unknown",
+        source_url: article.source_url || "",
+        authors: article.authors || "",
+        journal: article.journal || "",
         publication_year: article.publication_year || null,
         doi: article.doi || null,
         pmid: article.pmid || null,
         nct_id: article.nct_id || null,
+        fda_identifier: article.fda_identifier || null,
+        pubchem_cid: article.pubchem_cid || null,
+        smiles: article.smiles || null,
         study_type: null
       };
 
       const res = await fetch("/api/intakes", {
         method: "POST",
-        headers: {"Content-Type": "application/json"},
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        alert(`Save failed: ${data.detail || JSON.stringify(data)}`);
+        alert("Save failed: " + JSON.stringify(data));
+        console.error("SAVE ERROR:", data);
         return;
       }
     }
 
-    alert(`Saved ${selectedArticles.length} article(s) to intake.`);
+    alert("✅ Intake saved successfully");
     loadIntakes();
   } catch (err) {
-    alert(`Save failed: ${err}`);
+    alert("Save failed: " + err);
+    console.error(err);
   }
 }
 
+// -----------------------------
+// Summary
+// -----------------------------
 async function createSummary() {
   if (!selectedArticles.length) {
     alert("Select or add at least one article first.");
@@ -367,32 +445,32 @@ async function createSummary() {
   }
 
   const payload = {
-    compound: document.getElementById("compound").value.trim(),
+    compound: document.getElementById("compound")?.value.trim() || "",
     keywords: getKeywords(),
     selected_articles: selectedArticles,
     user_notes: document.getElementById("reviewer-notes")?.value.trim() || null
   };
 
   const output = document.getElementById("summary-output");
-  output.value = "Creating summary...";
+  if (output) output.value = "Creating summary...";
 
   try {
     const res = await fetch("/api/create-summary", {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
 
     const data = await res.json();
 
     if (!res.ok) {
-      output.value = `Summary failed: ${data.detail || JSON.stringify(data)}`;
+      if (output) output.value = `Summary failed: ${data.detail || JSON.stringify(data)}`;
       return;
     }
 
-    output.value = data.report_markdown || "";
+    if (output) output.value = data.report_markdown || "";
   } catch (err) {
-    output.value = `Summary failed: ${err}`;
+    if (output) output.value = `Summary failed: ${err}`;
   }
 }
 
@@ -403,7 +481,7 @@ async function downloadWordReport() {
   }
 
   const payload = {
-    compound: document.getElementById("compound").value.trim(),
+    compound: document.getElementById("compound")?.value.trim() || "",
     keywords: getKeywords(),
     selected_articles: selectedArticles,
     user_notes: document.getElementById("reviewer-notes")?.value.trim() || null
@@ -412,7 +490,7 @@ async function downloadWordReport() {
   try {
     const res = await fetch("/api/create-summary-docx", {
       method: "POST",
-      headers: {"Content-Type": "application/json"},
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
 
@@ -438,8 +516,12 @@ async function downloadWordReport() {
   }
 }
 
+// -----------------------------
+// Saved intake area
+// -----------------------------
 async function loadIntakes() {
   const el = document.getElementById("intakes");
+  if (!el) return;
 
   try {
     const res = await fetch("/api/intakes");
@@ -477,21 +559,34 @@ async function deleteIntake(id) {
   loadIntakes();
 }
 
-// ---------- init ----------
+// -----------------------------
+// Init
+// -----------------------------
 document.addEventListener("DOMContentLoaded", () => {
   renderSources();
   renderSelectedArticles();
   loadIntakes();
 
-  document.getElementById("search-form").addEventListener("submit", runSearch);
-  document.getElementById("save-intake-btn").addEventListener("click", saveIntake);
-  document.getElementById("create-summary-btn").addEventListener("click", createSummary);
-  document.getElementById("download-word-btn").addEventListener("click", downloadWordReport);
-  document.getElementById("clear-selection").addEventListener("click", clearSelection);
-  document.getElementById("result-source-filter").addEventListener("change", applyResultFilter);
-  document.getElementById("load-more-btn").addEventListener("click", () => {
-    displayLimit += 10;
-    renderResults();
-  });
-  document.getElementById("add-manual-link-btn").addEventListener("click", addManualLink);
+  const searchForm = document.getElementById("search-form");
+  const saveBtn = document.getElementById("save-intake-btn");
+  const summaryBtn = document.getElementById("create-summary-btn");
+  const downloadBtn = document.getElementById("download-word-btn");
+  const clearBtn = document.getElementById("clear-selection");
+  const sourceFilter = document.getElementById("result-source-filter");
+  const loadMoreBtn = document.getElementById("load-more-btn");
+  const addManualBtn = document.getElementById("add-manual-link-btn");
+
+  if (searchForm) searchForm.addEventListener("submit", runSearch);
+  if (saveBtn) saveBtn.addEventListener("click", saveIntake);
+  if (summaryBtn) summaryBtn.addEventListener("click", createSummary);
+  if (downloadBtn) downloadBtn.addEventListener("click", downloadWordReport);
+  if (clearBtn) clearBtn.addEventListener("click", clearSelection);
+  if (sourceFilter) sourceFilter.addEventListener("change", applyResultFilter);
+  if (loadMoreBtn) {
+    loadMoreBtn.addEventListener("click", () => {
+      displayLimit += 10;
+      renderResults();
+    });
+  }
+  if (addManualBtn) addManualBtn.addEventListener("click", addManualLink);
 });
