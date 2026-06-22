@@ -23,7 +23,7 @@
 
       <div class="row g-4">
         <div class="col-lg-4">
-          <div class="card shadow-sm rounded-4 sticky-top-card">
+          <div class="card shadow-sm rounded-4">
             <div class="card-body">
               <h2 class="h5">1) Search sources</h2>
               <form id="search-form" class="row g-3">
@@ -35,7 +35,7 @@
                   <label class="form-label">Keywords (comma-separated)</label>
                   <input class="form-control" id="keywords" value="toxicology, ICH M7, NOAEL">
                   <div class="form-text">
-                    Results shown below are limited to direct public pages that mention the compound in the title, snippet, or URL.
+                    Search can return direct records and jump-off links. Summary reading works best on public HTML pages.
                   </div>
                 </div>
                 <div class="col-12">
@@ -65,7 +65,7 @@
                   </button>
                 </div>
               </div>
-              <div id="results" class="small text-muted">Run a search to retrieve direct-link article pages.</div>
+              <div id="results" class="small text-muted">Run a search to retrieve source links.</div>
             </div>
           </div>
 
@@ -85,13 +85,20 @@
               </div>
 
               <div class="mb-3">
-                <label class="form-label">Articles used for intake</label>
-                <div id="selected-articles" class="border rounded-3 p-3 selection-box small text-muted">
-                  No articles selected yet.
+                <label class="form-label">Add external article/link manually</label>
+                <div class="input-group">
+                  <input id="manual-link" class="form-control" placeholder="Paste public article/page URL here">
+                  <button id="add-manual-link-btn" class="btn btn-outline-primary" type="button">Add link</button>
                 </div>
                 <div class="form-text">
-                  There is no hard limit here. Each selected article will be saved as its own CSV row for structured export.
+                  Manual URLs are best when they are publicly accessible HTML pages. Paywalled/logged-in content may not be readable by the summary generator.
                 </div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label">Articles used for intake</label>
+                <div id="selected-articles" class="border rounded-3 p-3 selection-box small text-muted">No articles selected yet.</div>
+                <div class="form-text">Each selected article can be saved as its own CSV row.</div>
               </div>
 
               <div class="mb-3">
@@ -123,7 +130,7 @@
                 </div>
               </div>
               <div class="small text-muted mb-2">
-                The report uses selected direct-link public records, returned snippets, and your reviewer notes. It does not guarantee full-text retrieval of arbitrary subscription content.
+                Summary tries to read selected public URLs directly. If a page blocks access or requires login, the tool falls back to stored snippet/metadata only.
               </div>
               <textarea class="form-control summary-box" id="summary-output" rows="18" placeholder="Summary output will appear here."></textarea>
             </div>
