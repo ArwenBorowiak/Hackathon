@@ -34,7 +34,9 @@
                 <div class="col-12">
                   <label class="form-label">Keywords (comma-separated)</label>
                   <input class="form-control" id="keywords" value="toxicology, ICH M7, NOAEL">
-                  <div class="form-text">Displayed results are filtered to keep only openable records where the compound appears in the returned title, snippet, or URL.</div>
+                  <div class="form-text">
+                    Results shown below are limited to direct public pages that mention the compound in the title, snippet, or URL.
+                  </div>
                 </div>
                 <div class="col-12">
                   <label class="form-label">Sources</label>
@@ -58,10 +60,12 @@
                   <select id="result-source-filter" class="form-select form-select-sm result-filter-select">
                     <option value="all">All sources</option>
                   </select>
-                  <button class="btn btn-outline-primary btn-sm" id="load-more-btn" type="button" style="display:none;">Load more</button>
+                  <button class="btn btn-outline-primary btn-sm" id="load-more-btn" type="button" style="display:none;">
+                    Load more
+                  </button>
                 </div>
               </div>
-              <div id="results" class="small text-muted">Run a search to retrieve articles and source links.</div>
+              <div id="results" class="small text-muted">Run a search to retrieve direct-link article pages.</div>
             </div>
           </div>
 
@@ -82,8 +86,12 @@
 
               <div class="mb-3">
                 <label class="form-label">Articles used for intake</label>
-                <div id="selected-articles" class="border rounded-3 p-3 selection-box small text-muted">No articles selected yet.</div>
-                <div class="form-text">There is no hard limit here. Each selected article will be saved as its own CSV row for structured export.</div>
+                <div id="selected-articles" class="border rounded-3 p-3 selection-box small text-muted">
+                  No articles selected yet.
+                </div>
+                <div class="form-text">
+                  There is no hard limit here. Each selected article will be saved as its own CSV row for structured export.
+                </div>
               </div>
 
               <div class="mb-3">
@@ -114,7 +122,9 @@
                   <button class="btn btn-outline-primary btn-sm" id="download-word-btn" type="button">Download Word report</button>
                 </div>
               </div>
-              <div class="small text-muted mb-2">The report uses selected article-like/public records, returned snippets, and your reviewer notes. It does not guarantee full-text retrieval of arbitrary subscription content.</div>
+              <div class="small text-muted mb-2">
+                The report uses selected direct-link public records, returned snippets, and your reviewer notes. It does not guarantee full-text retrieval of arbitrary subscription content.
+              </div>
               <textarea class="form-control summary-box" id="summary-output" rows="18" placeholder="Summary output will appear here."></textarea>
             </div>
           </div>
