@@ -21,30 +21,9 @@ from app.schemas.common import (
     SummaryRequest,
     SummaryResponse,
 )
-from app.services.scoring import (
-    suggest_data_quality_score,
-    suggest_reference_grade,
-)
+from app.services.scoring import suggest_data_quality_score, suggest_reference_grade
 
 router = APIRouter(prefix="/api", tags=["api"])
-
-JUMPOFF_SOURCES = {
-    "google-web",
-    "manual-reference",
-    "harvard-studies",
-    "ema-emea",
-    "echa-reach",
-    "nih",
-    "who",
-    "university-studies",
-    "medical-institutions",
-    "tox-literature",
-    "ich-guidance",
-    "fda-official",
-    "europe-pmc",
-    "ncbi-bookshelf",
-    "patents-google",
-}
 
 
 def build_citation(article: SearchResult) -> str:
@@ -63,81 +42,140 @@ def build_citation(article: SearchResult) -> str:
 
 
 def build_report_text(payload: SummaryRequest) -> str:
-    articles = [
-        a for a in payload.selected_articles if a.source_database not in JUMPOFF_SOURCES
-    ]
+    articles = payload.selected_articles
 
     if not articles:
         raise HTTPException(
             status_code=400,
-            detail="Select at least one real article (not Google/manual search links)",
+            detail="Select at least one direct-link article first.",
         )
 
-    refs = []
-    article_sections = []
-    comparison = []
+    refs: List[str] = []
+    article_sections: List[str] = []
+    comparison_lines: List[str] = []
 
-    for i, a in enumerate(articles, 1):
-        citation = build_citation(a)
-        refs.append(f"{i}. {citation}")
+    for idx, article in enumerate(articles, start=1):
+        citation = build_citation(article)
+        refs.append(f"{idx}. {citation}")
+        snippet = article.snippet or "No snippet text was retrieved for this article; review the full source directly."
 
-        snippet = a.snippet or "No snippet available"
+        article_sections.extend(
+            [
+                f"### Article {idx}: {article.title}",
+                f"- Citation: {citation}",
+                (
+                    f"- Source relevance to query: The retrieved record is being considered for the query on {payload.compound}"
+                    + (f" with keywords {', '.join(payload.keywords)}." if payload.keywords else ".")
+                ),
+                f"- Retrieved evidence summary: {snippet}",
+                "",
+            ]
+        )
 
-        article_sections.append(f"### Article {i}: {a.title}")
-        article_sections.append(f"- Citation: {citation}")
-        article_sections.append(f"- Evidence: {snippet}")
-        article_sections.append("")
-
-        if any(w in snippet.lower() for w in ["no effect", "failed", "not"]):
-            comparison.append(f"- {citation} suggests weak or negative findings")
+        low = (snippet or "").lower()
+        if any(term in low for term in ["no effect", "did not", "negative", "lack", "failed"]):
+            comparison_lines.append(
+                f"- {citation} includes wording that may indicate a limited, negative, or non-supportive finding based on the retrieved snippet."
+            )
         else:
-            comparison.append(f"- {citation} appears supportive (snippet-based only)")
+            comparison_lines.append(
+                f"- {citation} appears potentially supportive or descriptive based on the retrieved snippet, but full-text review is required to confirm interpretation."
+            )
 
     lines = [
-        f"# Evidence Summary: {payload.compound}",
+        f"# Evidence Summary Draft: {payload.compound}",
         "",
-        "## Executive Summary",
-        f"{len(articles)} articles reviewed for {payload.compound}",
+        "## Executive summary",
+        (
+            f"This report compiles {len(articles)} selected direct-link public records retrieved for the search focus on {payload.compound}"
+            + (f" with the keywords {', '.join(payload.keywords)}." if payload.keywords else ".")
+        ),
+        (
+            "The draft below is based on the selected record metadata, direct source links, retrieved snippets, and reviewer notes entered in the app. "
+            "It should not be treated as a final scientific or regulatory interpretation until each full source has been reviewed manually."
+        ),
         "",
-        "## Articles",
+        "## Search overview",
+        f"- Compound / API searched: {payload.compound}",
+        f"- Keywords: {', '.join(payload.keywords) if payload.keywords else 'None provided'}",
+        f"- Number of direct-link records included in report: {len(articles)}",
+        "",
+        "## Included articles",
         "",
     ]
-
-    lines.extend(refs)
-    lines.append("")
-    lines.append("## Article Details")
-    lines.append("")
+    lines.extend([f"- {r}" for r in refs])
+    lines.extend(["", "## Article-by-article review", ""])
     lines.extend(article_sections)
-
-    lines.append("## Comparison")
-    lines.append("")
-    lines.extend(comparison)
-
-    lines.append("")
-    lines.append("## Notes")
-    lines.append(payload.user_notes or "None")
+    lines.extend(["## Article comparison and consistency check", ""])
+    lines.extend(comparison_lines)
+    lines.extend(["", "## Reviewer notes", payload.user_notes or "No reviewer notes added.", "", "## References", ""])
+    lines.extend(refs)
 
     return "\n".join(lines)
 
 
-def build_docx(text: str) -> bytes:
-    paragraphs = [
-        f'<w:p><w:r><w:t>{escape(line)}</w:t></w:r></w:p>'
-        for line in text.split("\n")
-    ]
+def build_simple_docx(report_text: str) -> bytes:
+    lines = report_text.split("\n")
+    paragraphs: List[str] = []
 
-    doc_xml = f"""
-    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
-      <w:body>
-        {''.join(paragraphs)}
-      </w:body>
-    </w:document>
-    """
+    for line in lines:
+        text = escape(line)
+        if line.startswith("# "):
+            paragraphs.append(f'<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>{text[2:]}</w:t></w:r></w:p>')
+        elif line.startswith("## "):
+            paragraphs.append(f'<w:p><w:r><w:rPr><w:b/><w:sz w:val="28"/></w:rPr><w:t>{text[3:]}</w:t></w:r></w:p>')
+        elif line.startswith("### "):
+            paragraphs.append(f'<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>{text[4:]}</w:t></w:r></w:p>')
+        elif line == "":
+            paragraphs.append("<w:p/>")
+        else:
+            paragraphs.append(f'<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>')
+
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:wpc="http://schemas.microsoft.com/office/word/2010/wordprocessingCanvas" '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:o="urn:schemas-microsoft-com:office:office" '
+        'xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" '
+        'xmlns:m="http://schemas.openxmlformats.org/officeDocument/2006/math" '
+        'xmlns:v="urn:schemas-microsoft-com:vml" '
+        'xmlns:wp14="http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:w10="urn:schemas-microsoft-com:office:word" '
+        'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+        'xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml" '
+        'xmlns:wpg="http://schemas.microsoft.com/office/word/2010/wordprocessingGroup" '
+        'xmlns:wpi="http://schemas.microsoft.com/office/word/2010/wordprocessingInk" '
+        'xmlns:wne="http://schemas.microsoft.com/office/2006/wordml" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+        'mc:Ignorable="w14 wp14">'
+        '<w:body>' + "".join(paragraphs) +
+        '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
+        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>'
+        '</w:sectPr></w:body></w:document>'
+    )
+
+    content_types = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        '<Default Extension="xml" ContentType="application/xml"/>'
+        '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+        '</Types>'
+    )
+
+    rels = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+        '</Relationships>'
+    )
 
     bio = io.BytesIO()
-    with zipfile.ZipFile(bio, "w") as z:
-        z.writestr("word/document.xml", doc_xml)
-        z.writestr("[Content_Types].xml", "")
+    with zipfile.ZipFile(bio, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", rels)
+        zf.writestr("word/document.xml", document_xml)
     bio.seek(0)
     return bio.getvalue()
 
@@ -147,31 +185,34 @@ def health():
     return {"status": "ok"}
 
 
+@router.get("/sources")
+def sources():
+    return {"sources": sorted(CONNECTORS.keys())}
+
+
 @router.post("/search", response_model=SearchResponse)
 async def search(payload: SearchRequest):
-    results = []
-    for src in payload.sources or CONNECTORS.keys():
-        c = CONNECTORS.get(src)
-        if not c:
+    requested = payload.sources or list(CONNECTORS.keys())
+    results: List[SearchResult] = []
+    query = " ".join([payload.compound] + payload.keywords).strip()
+
+    for source in requested:
+        connector = CONNECTORS.get(source)
+        if not connector:
             continue
         try:
-            results.extend(
-                await c.search(
-                    payload.compound,
-                    payload.keywords,
-                    payload.limit_per_source,
-                )
-            )
-        except Exception as e:
+            results.extend(await connector.search(payload.compound, payload.keywords, payload.limit_per_source))
+        except Exception as exc:
             results.append(
                 SearchResult(
-                    title="Error",
-                    source_database=src,
-                    snippet=str(e),
+                    title=f"Connector error for {source}",
+                    source_database=source,
+                    snippet=str(exc),
                     raw={},
                 )
             )
-    return SearchResponse(query=payload.compound, results=results)
+
+    return SearchResponse(query=query, results=results)
 
 
 @router.post("/create-summary", response_model=SummaryResponse)
@@ -180,23 +221,64 @@ def create_summary(payload: SummaryRequest):
 
 
 @router.post("/create-summary-docx")
-def create_docx(payload: SummaryRequest):
-    text = build_report_text(payload)
-    file = build_docx(text)
+def create_summary_docx(payload: SummaryRequest):
+    report_text = build_report_text(payload)
+    data = build_simple_docx(report_text)
+    filename = f"{payload.compound or 'report'}-evidence-summary.docx"
+
     return StreamingResponse(
-        io.BytesIO(file),
+        io.BytesIO(data),
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+@router.get("/intakes", response_model=list[StudyIntakeResponse])
+def list_intakes(db: Session = Depends(get_db)):
+    rows = db.query(StudyIntake).order_by(StudyIntake.updated_at.desc()).all()
+    return rows
 
 
 @router.post("/intakes", response_model=StudyIntakeResponse)
 def create_intake(payload: StudyIntakeCreate, db: Session = Depends(get_db)):
-    data = payload.model_dump()
-    row = StudyIntake(**data)
-    db.add(row)
+    try:
+        data = payload.model_dump()
+
+        if data.get("data_quality_score") is None:
+            data["data_quality_score"] = suggest_data_quality_score(
+                glp_compliant=payload.glp_compliant,
+                doi=payload.doi,
+                source_database=payload.source_database,
+                has_identifier=bool(
+                    payload.pmid or payload.nct_id or payload.fda_identifier or payload.pubchem_cid
+                ),
+            )
+
+        if not data.get("reference_grade"):
+            data["reference_grade"] = suggest_reference_grade(data["data_quality_score"])
+
+        row = StudyIntake(**data)
+        db.add(row)
+        db.commit()
+        db.refresh(row)
+        return row
+
+    except SQLAlchemyError as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database save failed: {str(exc)}")
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Save failed: {str(exc)}")
+
+
+@router.delete("/intakes/{intake_id}", response_class=PlainTextResponse)
+def delete_intake(intake_id: int, db: Session = Depends(get_db)):
+    row = db.query(StudyIntake).filter(StudyIntake.id == intake_id).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="Intake not found")
+    db.delete(row)
     db.commit()
-    db.refresh(row)
-    return row
+    return "deleted"
 
 
 @router.get("/export.csv")
@@ -205,10 +287,51 @@ def export_csv(db: Session = Depends(get_db)):
     output = io.StringIO()
     writer = csv.writer(output)
 
-    writer.writerow(["compound", "title", "source_database"])
+    headers = [
+        "id",
+        "compound",
+        "title",
+        "source_database",
+        "source_url",
+        "authors",
+        "journal",
+        "publication_year",
+        "doi",
+        "pmid",
+        "nct_id",
+        "fda_identifier",
+        "pubchem_cid",
+        "smiles",
+        "ich_m7_relevance",
+        "glp_compliant",
+        "study_type",
+        "species",
+        "route_of_administration",
+        "dosage",
+        "exposure_duration",
+        "toxicology_endpoint",
+        "noael",
+        "loel",
+        "key_findings",
+        "data_quality_score",
+        "data_quality_rationale",
+        "reference_grade",
+        "reviewer_name",
+        "source_bundle",
+        "extraction_notes",
+        "status",
+        "created_at",
+        "updated_at",
+    ]
+
+    writer.writerow(headers)
 
     for r in rows:
-        writer.writerow([r.compound, r.title, r.source_database])
+        writer.writerow([getattr(r, h) for h in headers])
 
     output.seek(0)
-    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv")
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=intakes.csv"},
+    )
