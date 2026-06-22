@@ -1,14 +1,17 @@
 import csv
-import zipfileimport io
-from typing import List
+import io
+import re
+import zipfile
+from typing import Any
 from urllib.request import Request, urlopen
 from urllib.error import URLError, HTTPError
 from xml.sax.saxutils import escape
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import PlainTextResponse, StreamingResponse
-from sqlalchemy.orm import Session
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import Session
 
 from app.connectors.registry import CONNECTORS
 from app.db.session import get_db
@@ -19,20 +22,39 @@ from app.schemas.common import (
     SearchResult,
     StudyIntakeCreate,
     StudyIntakeResponse,
-    SummaryRequest,
-    SummaryResponse,
 )
 from app.services.scoring import suggest_data_quality_score, suggest_reference_grade
 
 router = APIRouter(prefix="/api", tags=["api"])
 
 
+# -----------------------------
+# Local summary models
+# -----------------------------
+class SummaryRequest(BaseModel):
+    compound: str
+    keywords: list[str] = Field(default_factory=list)
+    selected_articles: list[dict[str, Any]] = Field(default_factory=list)
+    user_notes: str | None = None
+
+
+class SummaryResponse(BaseModel):
+    report_markdown: str
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
 def fetch_public_page_text(url: str, limit: int = 12000) -> str:
     """
     Best-effort fetch for public HTML/text pages.
-    It will not reliably work for paywalled sites, logged-in content, blocked bots, or many PDFs.
+    This will NOT reliably work for paywalled content, login-gated pages,
+    bot-protected sites, or many PDFs.
     """
     if not url:
+        return ""
+
+    if not url.startswith("http://") and not url.startswith("https://"):
         return ""
 
     try:
@@ -42,11 +64,11 @@ def fetch_public_page_text(url: str, limit: int = 12000) -> str:
                 "User-Agent": "Mozilla/5.0 (compatible; DossierIntakeBot/1.0)"
             },
         )
+
         with urlopen(req, timeout=15) as resp:
             content_type = resp.headers.get("Content-Type", "")
             raw = resp.read(limit).decode("utf-8", errors="ignore")
 
-        # only attempt HTML/text cleanup
         if "html" in content_type or "text" in content_type or content_type == "":
             raw = re.sub(r"(?is)<script.*?>.*?</script>", " ", raw)
             raw = re.sub(r"(?is)<style.*?>.*?</style>", " ", raw)
@@ -55,18 +77,24 @@ def fetch_public_page_text(url: str, limit: int = 12000) -> str:
             return raw[:limit]
 
         return ""
-    except (URLError, HTTPError, ValueError, TimeoutError):
+
+    except (URLError, HTTPError, TimeoutError, ValueError):
         return ""
     except Exception:
         return ""
 
 
-def sentence_split(text: str) -> List[str]:
-    parts = re.split(r'(?<=[.!?])\s+', text or "")
+def sentence_split(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?])\s+", text or "")
     return [p.strip() for p in parts if p.strip()]
 
 
-def extract_relevant_sentences(text: str, compound: str, keywords: List[str], max_sentences: int = 6) -> List[str]:
+def extract_relevant_sentences(
+    text: str,
+    compound: str,
+    keywords: list[str],
+    max_sentences: int = 6,
+) -> list[str]:
     if not text:
         return []
 
@@ -74,16 +102,19 @@ def extract_relevant_sentences(text: str, compound: str, keywords: List[str], ma
     keywords_l = [k.lower() for k in (keywords or [])]
 
     sents = sentence_split(text)
+    ranked: list[tuple[int, str]] = []
 
-    ranked = []
     for s in sents:
         sl = s.lower()
         score = 0
+
         if compound_l and compound_l in sl:
             score += 3
+
         for k in keywords_l:
             if k and k in sl:
                 score += 1
+
         if score > 0:
             ranked.append((score, s))
 
@@ -91,18 +122,28 @@ def extract_relevant_sentences(text: str, compound: str, keywords: List[str], ma
     return [s for _, s in ranked[:max_sentences]]
 
 
-def build_citation(article: SearchResult) -> str:
-    citation = f'{article.authors or "Unknown author"}. "{article.title}". {article.journal or article.source_database}'
-    if article.publication_year:
-        citation += f", {article.publication_year}"
-    if article.doi:
-        citation += f". DOI: {article.doi}"
-    elif article.pmid:
-        citation += f". PMID: {article.pmid}"
-    elif article.nct_id:
-        citation += f". NCT ID: {article.nct_id}"
-    if article.source_url:
-        citation += f". URL: {article.source_url}"
+def build_citation(article: dict[str, Any]) -> str:
+    authors = article.get("authors") or "Unknown author"
+    title = article.get("title") or "Untitled"
+    source_database = article.get("source_database") or "Unknown source"
+    journal = article.get("journal") or source_database
+    publication_year = article.get("publication_year")
+    doi = article.get("doi")
+    pmid = article.get("pmid")
+    nct_id = article.get("nct_id")
+    source_url = article.get("source_url")
+
+    citation = f'{authors}. "{title}". {journal}'
+    if publication_year:
+        citation += f", {publication_year}"
+    if doi:
+        citation += f". DOI: {doi}"
+    elif pmid:
+        citation += f". PMID: {pmid}"
+    elif nct_id:
+        citation += f". NCT ID: {nct_id}"
+    if source_url:
+        citation += f". URL: {source_url}"
     return citation
 
 
@@ -111,9 +152,9 @@ def build_report_text(payload: SummaryRequest) -> str:
     if not articles:
         raise HTTPException(status_code=400, detail="Select at least one article first.")
 
-    refs: List[str] = []
-    article_sections: List[str] = []
-    comparison_lines: List[str] = []
+    refs: list[str] = []
+    article_sections: list[str] = []
+    comparison_lines: list[str] = []
 
     supportive = 0
     limited = 0
@@ -122,9 +163,9 @@ def build_report_text(payload: SummaryRequest) -> str:
         citation = build_citation(article)
         refs.append(f"{idx}. {citation}")
 
-        fetched_text = fetch_public_page_text(article.source_url or "")
+        page_text = fetch_public_page_text(article.get("source_url") or "")
         relevant_sentences = extract_relevant_sentences(
-            fetched_text,
+            page_text,
             payload.compound,
             payload.keywords,
             max_sentences=6,
@@ -133,19 +174,34 @@ def build_report_text(payload: SummaryRequest) -> str:
         if relevant_sentences:
             evidence_summary = " ".join(relevant_sentences)
         else:
-            evidence_summary = article.snippet or "No retrievable public text was available from the selected URL, so the report falls back to stored snippet/metadata only."
+            evidence_summary = (
+                article.get("snippet")
+                or "No retrievable public text was available from the selected URL, so the report falls back to stored snippet/metadata only."
+            )
 
-        article_sections.extend([
-            f"### Article {idx}: {article.title}",
-            f"- Citation: {citation}",
-            f"- Source relevance to query: The article was selected for the compound/API {payload.compound}" +
-            (f" with the query terms {', '.join(payload.keywords)}." if payload.keywords else "."),
-            f"- Retrieved evidence summary: {evidence_summary}",
-            ""
-        ])
+        article_sections.extend(
+            [
+                f"### Article {idx}: {article.get('title') or 'Untitled'}",
+                f"- Citation: {citation}",
+                f"- Source relevance to query: The selected source is being considered for the compound/API {payload.compound}"
+                + (f" with the query terms {', '.join(payload.keywords)}." if payload.keywords else "."),
+                f"- Retrieved evidence summary: {evidence_summary}",
+                "",
+            ]
+        )
 
         low = evidence_summary.lower()
-        if any(term in low for term in ["no effect", "did not", "negative", "lack", "failed", "not significant"]):
+        if any(
+            term in low
+            for term in [
+                "no effect",
+                "did not",
+                "negative",
+                "lack",
+                "failed",
+                "not significant",
+            ]
+        ):
             limited += 1
             comparison_lines.append(
                 f"- {citation} includes wording that may indicate limited, negative, or non-supportive findings based on the retrieved text/snippet."
@@ -160,10 +216,10 @@ def build_report_text(payload: SummaryRequest) -> str:
         f"# Evidence Summary Draft: {payload.compound}",
         "",
         "## Executive Summary",
-        f"This report compiles {len(articles)} selected source records for the compound/API {payload.compound}" +
-        (f" using the query terms {', '.join(payload.keywords)}." if payload.keywords else "."),
+        f"This report compiles {len(articles)} selected source records for the compound/API {payload.compound}"
+        + (f" using the query terms {', '.join(payload.keywords)}." if payload.keywords else "."),
         "The report attempts to read each selected public URL directly. If a selected page cannot be read because it is blocked, unavailable, or not publicly accessible, the report falls back to stored snippet/metadata only.",
-        f"Based on the retrieved content, {supportive} article(s) appeared potentially supportive/descriptive and {limited} article(s) appeared limited or potentially non-supportive, using simple keyword-based interpretation of retrieved text rather than a final scientific judgment.",
+        f"Based on the retrieved content, {supportive} source(s) appeared potentially supportive/descriptive and {limited} source(s) appeared limited or potentially non-supportive, using simple keyword-based interpretation of retrieved text rather than a final scientific judgment.",
         "",
         "## Search Overview",
         f"- Compound / API searched: {payload.compound}",
@@ -175,28 +231,11 @@ def build_report_text(payload: SummaryRequest) -> str:
     ]
 
     lines.extend([f"- {r}" for r in refs])
-
-    lines.extend([
-        "",
-        "## Article-by-Article Review",
-        "",
-    ])
+    lines.extend(["", "## Article-by-Article Review", ""])
     lines.extend(article_sections)
-
-    lines.extend([
-        "## Cross-Article Comparison",
-        "",
-    ])
+    lines.extend(["## Cross-Article Comparison", ""])
     lines.extend(comparison_lines)
-
-    lines.extend([
-        "",
-        "## Reviewer Notes",
-        payload.user_notes or "No reviewer notes added.",
-        "",
-        "## References",
-        "",
-    ])
+    lines.extend(["", "## Reviewer Notes", payload.user_notes or "No reviewer notes added.", "", "## References", ""])
     lines.extend(refs)
 
     return "\n".join(lines)
@@ -204,20 +243,29 @@ def build_report_text(payload: SummaryRequest) -> str:
 
 def build_simple_docx(report_text: str) -> bytes:
     lines = report_text.split("\n")
-    paragraphs: List[str] = []
+    paragraphs: list[str] = []
 
     for line in lines:
         text = escape(line)
+
         if line.startswith("# "):
-            paragraphs.append(f'<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>{text[2:]}</w:t></w:r></w:p>')
+            paragraphs.append(
+                f'<w:p><w:r><w:rPr><w:b/><w:sz w:val="32"/></w:rPr><w:t>{text[2:]}</w:t></w:r></w:p>'
+            )
         elif line.startswith("## "):
-            paragraphs.append(f'<w:p><w:r><w:rPr><w:b/><w:sz w:val="28"/></w:rPr><w:t>{text[3:]}</w:t></w:r></w:p>')
+            paragraphs.append(
+                f'<w:p><w:r><w:rPr><w:b/><w:sz w:val="28"/></w:rPr><w:t>{text[3:]}</w:t></w:r></w:p>'
+            )
         elif line.startswith("### "):
-            paragraphs.append(f'<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>{text[4:]}</w:t></w:r></w:p>')
+            paragraphs.append(
+                f'<w:p><w:r><w:rPr><w:b/></w:rPr><w:t>{text[4:]}</w:t></w:r></w:p>'
+            )
         elif line == "":
             paragraphs.append("<w:p/>")
         else:
-            paragraphs.append(f'<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>')
+            paragraphs.append(
+                f'<w:p><w:r><w:t xml:space="preserve">{text}</w:t></w:r></w:p>'
+            )
 
     document_xml = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
@@ -237,10 +285,11 @@ def build_simple_docx(report_text: str) -> bytes:
         'xmlns:wne="http://schemas.microsoft.com/office/2006/wordml" '
         'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
         'mc:Ignorable="w14 wp14">'
-        '<w:body>' + "".join(paragraphs) +
-        '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
-        '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>'
-        '</w:sectPr></w:body></w:document>'
+        '<w:body>'
+        + "".join(paragraphs)
+        + '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/>'
+        + '<w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440" w:header="708" w:footer="708" w:gutter="0"/>'
+        + "</w:sectPr></w:body></w:document>"
     )
 
     content_types = (
@@ -249,14 +298,14 @@ def build_simple_docx(report_text: str) -> bytes:
         '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
         '<Default Extension="xml" ContentType="application/xml"/>'
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
-        '</Types>'
+        "</Types>"
     )
 
     rels = (
         '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
-        '</Relationships>'
+        "</Relationships>"
     )
 
     bio = io.BytesIO()
@@ -264,6 +313,7 @@ def build_simple_docx(report_text: str) -> bytes:
         zf.writestr("[Content_Types].xml", content_types)
         zf.writestr("_rels/.rels", rels)
         zf.writestr("word/document.xml", document_xml)
+
     bio.seek(0)
     return bio.getvalue()
 
@@ -281,7 +331,7 @@ def sources():
 @router.post("/search", response_model=SearchResponse)
 async def search(payload: SearchRequest):
     requested = payload.sources or list(CONNECTORS.keys())
-    results: List[SearchResult] = []
+    results: list[SearchResult] = []
 
     for source in requested:
         connector = CONNECTORS.get(source)
@@ -329,7 +379,8 @@ def create_summary_docx(payload: SummaryRequest):
 
 @router.get("/intakes", response_model=list[StudyIntakeResponse])
 def list_intakes(db: Session = Depends(get_db)):
-    return db.query(StudyIntake).order_by(StudyIntake.updated_at.desc()).all()
+    rows = db.query(StudyIntake).order_by(StudyIntake.updated_at.desc()).all()
+    return rows
 
 
 @router.post("/intakes", response_model=StudyIntakeResponse)
@@ -428,4 +479,3 @@ def export_csv(db: Session = Depends(get_db)):
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=intakes.csv"},
     )
-import re
