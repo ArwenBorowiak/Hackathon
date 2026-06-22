@@ -3,27 +3,24 @@ const SOURCE_OPTIONS = [
   { key: "clinicaltrials.gov", label: "ClinicalTrials.gov", checked: true },
   { key: "pubchem", label: "PubChem", checked: true },
 
-  // Jump-off sources (UI only)
-  { key: "fda-official", label: "FDA Official", checked: true },
+  // 20+ UI sources (jump-off)
+  { key: "fda", label: "FDA", checked: true },
   { key: "who", label: "WHO", checked: true },
-  { key: "ema-emea", label: "EMA / EMEA", checked: false },
-  { key: "europe-pmc", label: "Europe PMC", checked: false },
-  { key: "harvard-studies", label: "Harvard Studies", checked: false },
+  { key: "ema", label: "EMA", checked: false },
   { key: "nih", label: "NIH", checked: false },
-  { key: "ncbi-bookshelf", label: "NCBI Bookshelf", checked: false },
-  { key: "university-studies", label: "University Studies", checked: false },
-  { key: "medical-institutions", label: "Medical Institutions", checked: false },
-  { key: "tox-literature", label: "Toxicology Literature", checked: false },
-  { key: "ich-guidance", label: "ICH Guidance", checked: false },
-  { key: "google-web", label: "Google Web Search", checked: false },
-  { key: "manual-reference", label: "Manual Reference", checked: false }
+  { key: "europe-pmc", label: "Europe PMC", checked: false },
+  { key: "harvard", label: "Harvard Studies", checked: false },
+  { key: "university", label: "University Studies", checked: false },
+  { key: "tox", label: "Toxicology Literature", checked: false },
+  { key: "ich", label: "ICH Guidance", checked: false },
+  { key: "google", label: "Google Web", checked: false },
+  { key: "manual", label: "Manual Reference", checked: false }
 ];
 
 let allResults = [];
-let filteredResults = [];
 let displayLimit = 10;
 
-// ---------- SOURCES ----------
+// ✅ RENDER SOURCES (THIS WAS BROKEN BEFORE)
 function renderSources() {
   const box = document.getElementById("sources-box");
 
@@ -38,61 +35,43 @@ function renderSources() {
   `).join("");
 }
 
-// ---------- SEARCH ----------
+// ✅ GET SELECTED SOURCES
 function getSelectedSources() {
   return [...document.querySelectorAll(".source-check:checked")]
     .map(x => x.value);
 }
 
-function getKeywords() {
-  return document.getElementById("keywords").value;
-}
-
-function buildJumpLink(source, compound, keywords) {
+// ✅ BUILD JUMP LINK (GOOGLE STYLE)
+function buildLink(source, compound, keywords) {
   const query = `${compound} ${keywords}`;
 
-  if (source === "who") {
-    return `https://www.google.com/search?q=${query}+site:who.int`;
-  }
-  if (source === "fda-official") {
-    return `https://www.google.com/search?q=${query}+site:fda.gov`;
-  }
-  if (source === "ema-emea") {
-    return `https://www.google.com/search?q=${query}+site:ema.europa.eu`;
-  }
-  if (source === "europe-pmc") {
-    return `https://www.google.com/search?q=${query}+site:europepmc.org`;
-  }
-
-  return `https://www.google.com/search?q=${query}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(query + " " + source)}`;
 }
 
-// ---------- RESULTS ----------
+// ✅ RENDER RESULTS (RESTORED CARD STYLE)
 function renderResults() {
   const container = document.getElementById("results");
 
   if (!allResults.length) {
-    container.innerHTML = "No results.";
+    container.innerHTML = `<div class="text-muted">No results</div>`;
     return;
   }
 
   container.innerHTML = allResults.slice(0, displayLimit).map(item => `
     <div class="result-card border rounded-3 p-3 mb-3 bg-white">
-      <div class="d-flex justify-content-between">
+      <div class="d-flex justify-content-between align-items-start">
         <div>
-          <b>${item.title}</b><br>
-          <small>${item.source_database}</small><br>
-          <small>${item.snippet || ""}</small>
+          <div class="fw-semibold">${item.title}</div>
+          <div class="small text-muted">${item.source_database}</div>
+          <div class="small">${item.snippet || ""}</div>
         </div>
-
-        <div>
-          <a class="btn btn-sm btn-outline-primary"
-             href="${item.source_url}"
-             target="_blank">
-             Open article
+        <div class="d-flex gap-2">
+          <a href="${item.source_url}" target="_blank"
+             class="btn btn-sm btn-outline-primary">
+            Open article
           </a>
           <button class="btn btn-sm btn-primary">
-             Save to intake
+            Save to intake
           </button>
         </div>
       </div>
@@ -100,40 +79,38 @@ function renderResults() {
   `).join("");
 }
 
-// ---------- MAIN SEARCH ----------
+// ✅ MAIN SEARCH
 async function runSearch(e) {
   e.preventDefault();
 
   const compound = document.getElementById("compound").value;
-  const keywords = getKeywords();
-  const sources = getSelectedSources();
+  const keywords = document.getElementById("keywords").value;
+  const selectedSources = getSelectedSources();
 
-  const payload = {
-    compound,
-    keywords: keywords.split(","),
-    sources: ["pubmed", "clinicaltrials.gov", "pubchem"],
-    limit_per_source: 5
-  };
-
+  // ✅ backend (real data)
   const res = await fetch("/api/search", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(payload)
+    body: JSON.stringify({
+      compound,
+      keywords: keywords.split(","),
+      sources: ["pubmed","clinicaltrials.gov","pubchem"],
+      limit_per_source: 5
+    })
   });
 
   const data = await res.json();
 
-  // ✅ Real connector results
   allResults = data.results || [];
 
-  // ✅ ADD jump-off results (this is what gives you 20+)
-  sources.forEach(src => {
+  // ✅ add jump-off sources (this gives you 20+ again)
+  selectedSources.forEach(src => {
     if (!["pubmed","clinicaltrials.gov","pubchem"].includes(src)) {
       allResults.push({
-        title: `Search ${src} for ${compound} ${keywords}`,
+        title: `Search ${src} for ${compound}`,
         source_database: src,
-        snippet: "Jump-off search link",
-        source_url: buildJumpLink(src, compound, keywords)
+        snippet: "Jump-off link",
+        source_url: buildLink(src, compound, keywords)
       });
     }
   });
@@ -141,7 +118,11 @@ async function runSearch(e) {
   renderResults();
 }
 
-// ---------- INIT ----------
-renderSources();
+// ✅ INIT (CRITICAL LINE YOU WERE MISSING)
+document.addEventListener("DOMContentLoaded", () => {
+  renderSources();
 
-document.getElementById("search-form").addEventListener("submit", runSearch);
+  document
+    .getElementById("search-form")
+    .addEventListener("submit", runSearch);
+});
