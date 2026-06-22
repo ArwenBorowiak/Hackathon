@@ -7,24 +7,6 @@ const SOURCE_OPTIONS = [
   { key: "pubchem", label: "PubChem", checked: false }
 ];
 
-const BLOCKED_SOURCE_NAMES = new Set([
-  "google-web",
-  "manual-reference",
-  "harvard-studies",
-  "ema-emea",
-  "echa-reach",
-  "nih",
-  "who",
-  "university-studies",
-  "medical-institutions",
-  "tox-literature",
-  "ich-guidance",
-  "fda-official",
-  "europe-pmc",
-  "ncbi-bookshelf",
-  "patents-google"
-]);
-
 let allResults = [];
 let filteredResults = [];
 let displayLimit = 10;
@@ -106,13 +88,9 @@ function normalizeAndFilterResults(results, compound) {
       ...r,
       snippet: sanitizeSnippet(r)
     }))
-    // direct URL only
     .filter(r => !!r.source_url)
-    // block google redirects / search helper links
-    .filter(r => !r.source_url.toLowerCase().includes("google.com/search"))
-    .filter(r => !r.title?.toLowerCase().startsWith("search "))
-    .filter(r => !BLOCKED_SOURCE_NAMES.has((r.source_database || "").toLowerCase()))
-    // must explicitly mention compound
+    .filter(r => !String(r.source_url).toLowerCase().includes("google.com/search"))
+    .filter(r => !String(r.title || "").toLowerCase().startsWith("search "))
     .filter(r => compoundAppears(r, compound));
 }
 
@@ -221,7 +199,10 @@ function removeFromSelection(id) {
 function clearSelection() {
   selectedArticles = [];
   renderSelectedArticles();
-  document.getElementById("summary-output").value = "";
+  const summaryBox = document.getElementById("summary-output");
+  if (summaryBox) {
+    summaryBox.value = "";
+  }
 }
 
 function renderSelectedArticles() {
@@ -346,14 +327,14 @@ async function saveIntake() {
 
   const commonPayload = {
     compound,
-    ich_m7_relevance: document.getElementById("ich-m7").value.trim() || null,
-    toxicology_endpoint: document.getElementById("tox-endpoint").value.trim() || null,
-    noael: document.getElementById("noael").value.trim() || null,
-    dosage: document.getElementById("dosage").value.trim() || null,
-    reference_grade: document.getElementById("reference-grade").value.trim() || null,
-    reviewer_name: document.getElementById("reviewer-name").value.trim() || null,
-    key_findings: document.getElementById("reviewer-notes").value.trim() || null,
-    extraction_notes: document.getElementById("reviewer-notes").value.trim() || null,
+    ich_m7_relevance: document.getElementById("ich-m7")?.value.trim() || null,
+    toxicology_endpoint: document.getElementById("tox-endpoint")?.value.trim() || null,
+    noael: document.getElementById("noael")?.value.trim() || null,
+    dosage: document.getElementById("dosage")?.value.trim() || null,
+    reference_grade: document.getElementById("reference-grade")?.value.trim() || null,
+    reviewer_name: document.getElementById("reviewer-name")?.value.trim() || null,
+    key_findings: document.getElementById("reviewer-notes")?.value.trim() || null,
+    extraction_notes: document.getElementById("reviewer-notes")?.value.trim() || null,
     source_bundle: buildSourceBundle(),
     status: "draft"
   };
@@ -412,11 +393,13 @@ async function createSummary() {
     compound,
     keywords: getKeywords(),
     selected_articles: selectedArticles,
-    user_notes: document.getElementById("reviewer-notes").value.trim() || null
+    user_notes: document.getElementById("reviewer-notes")?.value.trim() || null
   };
 
   const output = document.getElementById("summary-output");
-  output.value = "Creating summary...";
+  if (output) {
+    output.value = "Creating summary...";
+  }
 
   try {
     const res = await fetch("/api/create-summary", {
@@ -430,13 +413,19 @@ async function createSummary() {
     const data = await res.json();
 
     if (!res.ok) {
-      output.value = `Summary failed: ${data.detail || JSON.stringify(data)}`;
+      if (output) {
+        output.value = `Summary failed: ${data.detail || JSON.stringify(data)}`;
+      }
       return;
     }
 
-    output.value = data.report_markdown || "";
+    if (output) {
+      output.value = data.report_markdown || "";
+    }
   } catch (err) {
-    output.value = `Summary failed: ${err}`;
+    if (output) {
+      output.value = `Summary failed: ${err}`;
+    }
   }
 }
 
@@ -452,99 +441,7 @@ async function downloadWordReport() {
     compound,
     keywords: getKeywords(),
     selected_articles: selectedArticles,
-    user_notes: document.getElementById("reviewer-notes").value.trim() || null
+    user_notes: document.getElementById("reviewer-notes")?.value.trim() || null
   };
 
   try {
-    const res = await fetch("/api/create-summary-docx", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify(payload)
-    });
-
-    if (!res.ok) {
-      const text = await res.text();
-      alert(`Word report failed: ${text}`);
-      return;
-    }
-
-    const blob = await res.blob();
-    const url = window.URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${compound || "report"}-evidence-summary.docx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-
-    window.URL.revokeObjectURL(url);
-  } catch (err) {
-    alert(`Word report failed: ${err}`);
-  }
-}
-
-async function loadIntakes() {
-  const el = document.getElementById("intakes");
-
-  try {
-    const res = await fetch("/api/intakes");
-    const data = await res.json();
-
-    if (!res.ok) {
-      el.innerHTML = `<div class="text-danger">Failed to load intakes.</div>`;
-      return;
-    }
-
-    if (!data.length) {
-      el.innerHTML = `<div class="text-muted">No saved intakes yet.</div>`;
-      return;
-    }
-
-    el.innerHTML = data.map(item => `
-      <div class="border rounded-3 p-3 mb-2 bg-white">
-        <div class="d-flex justify-content-between gap-2 align-items-start">
-          <div>
-            <div class="fw-semibold">${escapeHtml(item.title)}</div>
-            <div class="small text-muted">${escapeHtml(item.compound)} · ${escapeHtml(item.source_database || "")}${item.publication_year ? " · " + item.publication_year : ""}</div>
-            <div class="small mt-1">${escapeHtml(item.authors || "")}</div>
-          </div>
-          <button
-            class="btn btn-sm btn-outline-danger"
-            onclick="deleteIntake(${item.id})"
-            type="button"
-          >
-            Delete
-          </button>
-        </div>
-      </div>
-    `).join("");
-  } catch (err) {
-    el.innerHTML = `<div class="text-danger">Failed to load intakes.</div>`;
-  }
-}
-
-async function deleteIntake(id) {
-  await fetch(`/api/intakes/${id}`, { method: "DELETE" });
-  loadIntakes();
-}
-
-document.getElementById("search-form").addEventListener("submit", runSearch);
-document.getElementById("save-intake-btn").addEventListener("click", saveIntake);
-document.getElementById("create-summary-btn").addEventListener("click", createSummary);
-document.getElementById("download-word-btn").addEventListener("click", downloadWordReport);
-document.getElementById("clear-selection").addEventListener("click", clearSelection);
-document.getElementById("result-source-filter").addEventListener("change", () => {
-  displayLimit = 10;
-  applyResultFilter();
-});
-document.getElementById("load-more-btn").addEventListener("click", () => {
-  displayLimit += 10;
-  renderResults();
-});
-
-renderSources();
-renderSelectedArticles();
-loadIntakes();
