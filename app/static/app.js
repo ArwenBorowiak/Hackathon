@@ -7,22 +7,52 @@ const SOURCE_OPTIONS = [
   { key: "pubchem", label: "PubChem", checked: false }
 ];
 
+const BLOCKED_SOURCE_NAMES = new Set([
+  "google-web",
+  "manual-reference",
+  "harvard-studies",
+  "ema-emea",
+  "echa-reach",
+  "nih",
+  "who",
+  "university-studies",
+  "medical-institutions",
+  "tox-literature",
+  "ich-guidance",
+  "fda-official",
+  "europe-pmc",
+  "ncbi-bookshelf",
+  "patents-google"
+]);
+
 let allResults = [];
 let filteredResults = [];
 let displayLimit = 10;
 let selectedArticles = [];
 
-// ✅ RENDER SOURCES (THIS WAS MISSING)
+function escapeHtml(text) {
+  return (text || "").replace(/[&<>"']/g, function (m) {
+    return {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      "\"": "&quot;",
+      "'": "&#039;"
+    }[m];
+  });
+}
+
 function renderSources() {
   const box = document.getElementById("sources-box");
-
   box.innerHTML = SOURCE_OPTIONS.map(src => `
     <div class="form-check">
-      <input class="form-check-input source-check"
-             type="checkbox"
-             value="${src.key}"
-             id="src-${src.key}"
-             ${src.checked ? "checked" : ""}>
+      <input
+        class="form-check-input source-check"
+        type="checkbox"
+        value="${src.key}"
+        id="src-${src.key}"
+        ${src.checked ? "checked" : ""}
+      >
       <label class="form-check-label" for="src-${src.key}">
         ${src.label}
       </label>
@@ -46,37 +76,66 @@ function articleId(item) {
   return [
     item.source_database || "",
     item.title || "",
-    item.source_url || ""
+    item.source_url || "",
+    item.doi || "",
+    item.pmid || "",
+    item.nct_id || ""
   ].join("||");
 }
 
 function compoundAppears(item, compound) {
-  const blob = [item.title, item.snippet, item.source_url]
-    .join(" ")
-    .toLowerCase();
+  const blob = [
+    item.title,
+    item.snippet,
+    item.source_url,
+    item.journal
+  ].filter(Boolean).join(" ").toLowerCase();
+
   return blob.includes((compound || "").toLowerCase());
 }
 
-// ✅ STRICT FILTER (NO JUMP LINKS)
+function sanitizeSnippet(item) {
+  const raw = (item.snippet || "").replace(/\s+/g, " ").trim();
+  if (!raw) return "";
+  return raw.length > 420 ? raw.slice(0, 420) + "…" : raw;
+}
+
 function normalizeAndFilterResults(results, compound) {
   return (results || [])
-    .filter(r => r.source_url)
-    .filter(r => !r.source_url.includes("google"))
-    .filter(r => !r.title.toLowerCase().startsWith("search"))
+    .map(r => ({
+      ...r,
+      snippet: sanitizeSnippet(r)
+    }))
+    // direct URL only
+    .filter(r => !!r.source_url)
+    // block google redirects / search helper links
+    .filter(r => !r.source_url.toLowerCase().includes("google.com/search"))
+    .filter(r => !r.title?.toLowerCase().startsWith("search "))
+    .filter(r => !BLOCKED_SOURCE_NAMES.has((r.source_database || "").toLowerCase()))
+    // must explicitly mention compound
     .filter(r => compoundAppears(r, compound));
 }
 
 function updateSourceFilterOptions() {
   const select = document.getElementById("result-source-filter");
+  const current = select.value || "all";
 
-  const sources = [...new Set(allResults.map(r => r.source_database))];
+  const uniqueSources = [...new Set(
+    allResults.map(r => r.source_database).filter(Boolean)
+  )].sort();
 
   select.innerHTML =
     `<option value="all">All sources</option>` +
-    sources.map(s => `<option value="${s}">${s}</option>`).join("");
+    uniqueSources.map(src => `<option value="${src}">${src}</option>`).join("");
+
+  if (current === "all" || uniqueSources.includes(current)) {
+    select.value = current;
+  } else {
+    select.value = "all";
+  }
 }
 
-function applyFilter() {
+function applyResultFilter() {
   const source = document.getElementById("result-source-filter").value;
 
   filteredResults = source === "all"
@@ -93,85 +152,399 @@ function renderResults() {
 
   const visible = filteredResults.slice(0, displayLimit);
 
-  meta.textContent = `${filteredResults.length} valid article(s)`;
+  meta.textContent = `${filteredResults.length} openable result(s)`;
 
   if (!filteredResults.length) {
-    container.innerHTML = "<div>No real articles found.</div>";
+    container.innerHTML = `
+      <div class="text-muted">
+        No direct-link public results found that explicitly mention the compound in the returned title, snippet, or URL.
+      </div>
+    `;
     loadMoreBtn.style.display = "none";
     return;
   }
 
-  container.innerHTML = visible.map(item => `
-    <div class="border p-3 mb-2">
-      <b>${item.title}</b><br>
-      <small>${item.source_database}</small><br>
-      <a href="${item.source_url}" target="_blank">Open article</a><br>
-      <button onclick='addToSelection(${JSON.stringify(item)})'>Save</button>
-    </div>
-  `).join("");
+  container.innerHTML = visible.map(item => {
+    const payload = encodeURIComponent(JSON.stringify(item));
+
+    return `
+      <div class="result-card border rounded-3 p-3 mb-3 bg-white">
+        <div class="d-flex justify-content-between align-items-start gap-3">
+          <div class="flex-grow-1">
+            <div class="fw-semibold mb-1">${escapeHtml(item.title || "Untitled")}</div>
+            <div class="small text-muted mb-1">${escapeHtml(item.source_database || "")}${item.publication_year ? " · " + item.publication_year : ""}</div>
+            <div class="small mb-1">${escapeHtml(item.authors || "")}</div>
+            <div class="small mb-2">${escapeHtml(item.journal || "")}</div>
+            <div class="small result-snippet">${escapeHtml(item.snippet || "")}</div>
+          </div>
+          <div class="result-actions">
+            <a
+              class="btn btn-sm btn-outline-primary"
+              href="${item.source_url}"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open article
+            </a>
+            <button
+              class="btn btn-sm btn-primary"
+              onclick="addToSelection(JSON.parse(decodeURIComponent('${payload}')))"
+              type="button"
+            >
+              Save to intake
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
 
   loadMoreBtn.style.display =
-    filteredResults.length > displayLimit ? "block" : "none";
-}
-
-async function runSearch(e) {
-  e.preventDefault();
-
-  const compound = document.getElementById("compound").value;
-  const sources = getSelectedSources();
-
-  if (!sources.length) {
-    alert("Select at least one source");
-    return;
-  }
-
-  const res = await fetch("/api/search", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({
-      compound,
-      keywords: getKeywords(),
-      sources,
-      limit_per_source: 25
-    })
-  });
-
-  const data = await res.json();
-
-  allResults = normalizeAndFilterResults(data.results, compound);
-
-  displayLimit = 10;
-
-  updateSourceFilterOptions();
-  applyFilter();
+    filteredResults.length > displayLimit ? "inline-block" : "none";
 }
 
 function addToSelection(item) {
-  if (!selectedArticles.some(a => articleId(a) === articleId(item))) {
+  const id = articleId(item);
+
+  if (!selectedArticles.some(a => articleId(a) === id)) {
     selectedArticles.push(item);
   }
-  renderSelected();
+
+  renderSelectedArticles();
 }
 
-function renderSelected() {
+function removeFromSelection(id) {
+  selectedArticles = selectedArticles.filter(a => articleId(a) !== id);
+  renderSelectedArticles();
+}
+
+function clearSelection() {
+  selectedArticles = [];
+  renderSelectedArticles();
+  document.getElementById("summary-output").value = "";
+}
+
+function renderSelectedArticles() {
   const box = document.getElementById("selected-articles");
 
   if (!selectedArticles.length) {
-    box.innerHTML = "No articles selected";
+    box.innerHTML = `<div class="text-muted">No articles selected yet.</div>`;
     return;
   }
 
-  box.innerHTML = selectedArticles.map((a, i) => `
-    <div>Article ${i + 1}: ${a.title}</div>
-  `).join("");
+  box.innerHTML = selectedArticles.map((item, idx) => {
+    const id = encodeURIComponent(articleId(item));
+
+    return `
+      <div class="border rounded-3 p-2 mb-2 bg-white">
+        <div class="d-flex justify-content-between align-items-start gap-2">
+          <div>
+            <div class="fw-semibold">Article ${idx + 1}: ${escapeHtml(item.title || "Untitled")}</div>
+            <div class="small text-muted">${escapeHtml(item.source_database || "")}${item.publication_year ? " · " + item.publication_year : ""}</div>
+            <div class="small">${escapeHtml(item.authors || "")}</div>
+          </div>
+          <div class="result-actions">
+            <a
+              class="btn btn-sm btn-outline-primary"
+              href="${item.source_url}"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Open article
+            </a>
+            <button
+              class="btn btn-sm btn-outline-danger"
+              onclick="removeFromSelection(decodeURIComponent('${id}'))"
+              type="button"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
 }
 
-// ✅ INIT (THIS ALSO WAS MISSING)
-renderSources();
+async function runSearch(evt) {
+  evt.preventDefault();
+
+  const container = document.getElementById("results");
+  const meta = document.getElementById("result-meta");
+  const compound = document.getElementById("compound").value.trim();
+  const sources = getSelectedSources();
+
+  if (!compound) {
+    alert("Enter a Compound / API first.");
+    return;
+  }
+
+  if (!sources.length) {
+    alert("Select at least one source.");
+    return;
+  }
+
+  container.innerHTML = `<div class="text-muted">Searching...</div>`;
+  meta.textContent = "Searching...";
+
+  displayLimit = 10;
+
+  const payload = {
+    compound,
+    keywords: getKeywords(),
+    sources,
+    limit_per_source: 25
+  };
+
+  try {
+    const res = await fetch("/api/search", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      container.innerHTML = `<div class="text-danger">Search failed: ${escapeHtml(data.detail || JSON.stringify(data))}</div>`;
+      meta.textContent = "Search failed";
+      return;
+    }
+
+    allResults = normalizeAndFilterResults(data.results || [], compound);
+    updateSourceFilterOptions();
+    applyResultFilter();
+  } catch (err) {
+    container.innerHTML = `<div class="text-danger">Search failed: ${escapeHtml(String(err))}</div>`;
+    meta.textContent = "Search failed";
+  }
+}
+
+function buildSourceBundle() {
+  return selectedArticles.map(a =>
+    [
+      a.source_database || "",
+      a.title || "",
+      a.source_url || "",
+      a.authors || ""
+    ].join(" | ")
+  ).join("\n");
+}
+
+async function saveIntake() {
+  const compound = document.getElementById("compound").value.trim();
+  const intakeTitle =
+    document.getElementById("intake-title").value.trim() ||
+    `${compound} evidence intake`;
+
+  if (!selectedArticles.length) {
+    alert("Select at least one article first.");
+    return;
+  }
+
+  const commonPayload = {
+    compound,
+    ich_m7_relevance: document.getElementById("ich-m7").value.trim() || null,
+    toxicology_endpoint: document.getElementById("tox-endpoint").value.trim() || null,
+    noael: document.getElementById("noael").value.trim() || null,
+    dosage: document.getElementById("dosage").value.trim() || null,
+    reference_grade: document.getElementById("reference-grade").value.trim() || null,
+    reviewer_name: document.getElementById("reviewer-name").value.trim() || null,
+    key_findings: document.getElementById("reviewer-notes").value.trim() || null,
+    extraction_notes: document.getElementById("reviewer-notes").value.trim() || null,
+    source_bundle: buildSourceBundle(),
+    status: "draft"
+  };
+
+  try {
+    for (const article of selectedArticles) {
+      const payload = {
+        ...commonPayload,
+        title: article.title || intakeTitle,
+        source_database: article.source_database || "mixed-sources",
+        source_url: article.source_url || null,
+        authors: article.authors || null,
+        journal: article.journal || null,
+        publication_year: article.publication_year || null,
+        doi: article.doi || null,
+        pmid: article.pmid || null,
+        nct_id: article.nct_id || null,
+        fda_identifier: article.fda_identifier || null,
+        pubchem_cid: article.pubchem_cid || null,
+        smiles: article.smiles || null,
+        study_type: article.study_type || null
+      };
+
+      const res = await fetch("/api/intakes", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        alert(`Save failed: ${data.detail || JSON.stringify(data)}`);
+        return;
+      }
+    }
+
+    alert(`Saved ${selectedArticles.length} article(s) to intake.`);
+    loadIntakes();
+  } catch (err) {
+    alert(`Save failed: ${err}`);
+  }
+}
+
+async function createSummary() {
+  const compound = document.getElementById("compound").value.trim();
+
+  if (!selectedArticles.length) {
+    alert("Select at least one article.");
+    return;
+  }
+
+  const payload = {
+    compound,
+    keywords: getKeywords(),
+    selected_articles: selectedArticles,
+    user_notes: document.getElementById("reviewer-notes").value.trim() || null
+  };
+
+  const output = document.getElementById("summary-output");
+  output.value = "Creating summary...";
+
+  try {
+    const res = await fetch("/api/create-summary", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      output.value = `Summary failed: ${data.detail || JSON.stringify(data)}`;
+      return;
+    }
+
+    output.value = data.report_markdown || "";
+  } catch (err) {
+    output.value = `Summary failed: ${err}`;
+  }
+}
+
+async function downloadWordReport() {
+  const compound = document.getElementById("compound").value.trim();
+
+  if (!selectedArticles.length) {
+    alert("Select at least one article.");
+    return;
+  }
+
+  const payload = {
+    compound,
+    keywords: getKeywords(),
+    selected_articles: selectedArticles,
+    user_notes: document.getElementById("reviewer-notes").value.trim() || null
+  };
+
+  try {
+    const res = await fetch("/api/create-summary-docx", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(payload)
+    });
+
+    if (!res.ok) {
+      const text = await res.text();
+      alert(`Word report failed: ${text}`);
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${compound || "report"}-evidence-summary.docx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    window.URL.revokeObjectURL(url);
+  } catch (err) {
+    alert(`Word report failed: ${err}`);
+  }
+}
+
+async function loadIntakes() {
+  const el = document.getElementById("intakes");
+
+  try {
+    const res = await fetch("/api/intakes");
+    const data = await res.json();
+
+    if (!res.ok) {
+      el.innerHTML = `<div class="text-danger">Failed to load intakes.</div>`;
+      return;
+    }
+
+    if (!data.length) {
+      el.innerHTML = `<div class="text-muted">No saved intakes yet.</div>`;
+      return;
+    }
+
+    el.innerHTML = data.map(item => `
+      <div class="border rounded-3 p-3 mb-2 bg-white">
+        <div class="d-flex justify-content-between gap-2 align-items-start">
+          <div>
+            <div class="fw-semibold">${escapeHtml(item.title)}</div>
+            <div class="small text-muted">${escapeHtml(item.compound)} · ${escapeHtml(item.source_database || "")}${item.publication_year ? " · " + item.publication_year : ""}</div>
+            <div class="small mt-1">${escapeHtml(item.authors || "")}</div>
+          </div>
+          <button
+            class="btn btn-sm btn-outline-danger"
+            onclick="deleteIntake(${item.id})"
+            type="button"
+          >
+            Delete
+          </button>
+        </div>
+      </div>
+    `).join("");
+  } catch (err) {
+    el.innerHTML = `<div class="text-danger">Failed to load intakes.</div>`;
+  }
+}
+
+async function deleteIntake(id) {
+  await fetch(`/api/intakes/${id}`, { method: "DELETE" });
+  loadIntakes();
+}
 
 document.getElementById("search-form").addEventListener("submit", runSearch);
-document.getElementById("result-source-filter").addEventListener("change", applyFilter);
+document.getElementById("save-intake-btn").addEventListener("click", saveIntake);
+document.getElementById("create-summary-btn").addEventListener("click", createSummary);
+document.getElementById("download-word-btn").addEventListener("click", downloadWordReport);
+document.getElementById("clear-selection").addEventListener("click", clearSelection);
+document.getElementById("result-source-filter").addEventListener("change", () => {
+  displayLimit = 10;
+  applyResultFilter();
+});
 document.getElementById("load-more-btn").addEventListener("click", () => {
   displayLimit += 10;
   renderResults();
 });
+
+renderSources();
+renderSelectedArticles();
+loadIntakes();
