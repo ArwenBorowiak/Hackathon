@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ app_name }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="container py-4">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+          <h1 class="mb-1">{{ app_name }}</h1>
+          <p class="text-muted mb-0">Standardized literature intake for dossier evidence triage</p>
+        </div>
+        <a class="btn btn-outline-primary" href="/api/export.csv">Export CSV</a>
+      </div>
+
+      <div class="alert alert-warning small">
+        Demo tool only. Evidence must be reviewed by qualified regulatory / tox / medical experts before dossier use.
+      </div>
+
+      <div class="row g-4">
+        <div class="col-lg-4">
+          <div class="card shadow-sm rounded-4 sticky-top-card">
+            <div class="card-body">
+              <h2 class="h5">1) Search sources</h2>
+              <form id="search-form" class="row g-3">
+                <div class="col-12">
+                  <label class="form-label">Compound / API</label>
+                  <input class="form-control" id="compound" value="desloratadine" required>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Keywords (comma-separated)</label>
+                  <input class="form-control" id="keywords" value="toxicology, ICH M7, NOAEL">
+                  <div class="form-text">Keyword filtering narrows the search. Results should only be treated as matching what the source actually contains.</div>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Sources</label>
+                  <div id="sources-box" class="border rounded-3 p-2 bg-light small sources-scroll"></div>
+                </div>
+                <div class="col-6">
+                  <label class="form-label">Results / source</label>
+                  <input type="number" min="1" max="25" class="form-control" id="limit" value="5">
+                </div>
+                <div class="col-12 d-grid">
+                  <button class="btn btn-primary" type="submit">Run search</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-8">
+          <div class="card shadow-sm rounded-4 mb-4">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h2 class="h5 mb-0">Search results</h2>
+                <span class="small text-muted" id="result-meta">No search run yet.</span>
+              </div>
+              <div id="results" class="small text-muted">Run a search to retrieve articles and source links.</div>
+            </div>
+          </div>
+
+          <div class="card shadow-sm rounded-4 mb-4">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h2 class="h5 mb-0">2) Articles used for intake</h2>
+                <div class="d-flex gap-2">
+                  <button class="btn btn-outline-secondary btn-sm" id="clear-selection" type="button">Clear</button>
+                  <button class="btn btn-success btn-sm" id="save-intake-btn" type="button">Save intake</button>
+                </div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label">Intake title</label>
+                <input class="form-control" id="intake-title" placeholder="Example: Desloratadine toxicology evidence package">
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label">Articles used for intake</label>
+                <div id="selected-articles" class="border rounded-3 p-3 selection-box small text-muted">No articles selected yet.</div>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label">Reviewer notes / intake notes</label>
+                <textarea class="form-control" id="reviewer-notes" rows="4" placeholder="Add manual notes after reading the full article(s)."></textarea>
+              </div>
+
+              <div class="mb-3">
+                <label class="form-label">Research-use fields (optional for CSV)</label>
+                <div class="row g-2">
+                  <div class="col-md-4"><input class="form-control" id="tox-endpoint" placeholder="Toxicology endpoint"></div>
+                  <div class="col-md-4"><input class="form-control" id="noael" placeholder="NOAEL"></div>
+                  <div class="col-md-4"><input class="form-control" id="reference-grade" placeholder="Reference grade"></div>
+                  <div class="col-md-4"><input class="form-control" id="ich-m7" placeholder="ICH M7 relevance"></div>
+                  <div class="col-md-4"><input class="form-control" id="dosage" placeholder="Dosage"></div>
+                  <div class="col-md-4"><input class="form-control" id="reviewer-name" placeholder="Reviewer"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="card shadow-sm rounded-4 mb-4">
+            <div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h2 class="h5 mb-0">3) Summary / report draft</h2>
+                <button class="btn btn-primary btn-sm" id="create-summary-btn" type="button">Create summary</button>
+              </div>
+              <div class="small text-muted mb-2">Generates a draft report from the selected articles and retrieved snippets. Validate against the full text before use.</div>
+              <textarea class="form-control summary-box" id="summary-output" rows="16" placeholder="Summary output will appear here."></textarea>
+            </div>
+          </div>
+
+          <div class="card shadow-sm rounded-4">
+            <div class="card-body">
+              <h2 class="h5 mb-2">Saved intakes</h2>
+              <div id="intakes" class="small text-muted">Loading…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
