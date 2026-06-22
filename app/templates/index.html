@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>{{ app_name }}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="container py-4">
+      <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+          <h1 class="mb-1">{{ app_name }}</h1>
+          <p class="text-muted mb-0">Standardized literature intake for dossier evidence triage</p>
+        </div>
+        <a class="btn btn-outline-primary" href="/api/export.csv">Export CSV</a>
+      </div>
+
+      <div class="alert alert-warning small">
+        Demo tool only. Evidence must be reviewed by qualified regulatory / tox / medical experts before dossier use.
+      </div>
+
+      <div class="row g-4">
+        <div class="col-lg-5">
+          <div class="card shadow-sm rounded-4">
+            <div class="card-body">
+              <h2 class="h5">1) Search sources</h2>
+              <form id="search-form" class="row g-3">
+                <div class="col-12">
+                  <label class="form-label">Compound / API</label>
+                  <input class="form-control" id="compound" value="desloratadine" required>
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Keywords (comma-separated)</label>
+                  <input class="form-control" id="keywords" value="toxicology, ICH M7, NOAEL">
+                </div>
+                <div class="col-12">
+                  <label class="form-label">Sources</label>
+                  <div id="sources-box" class="border rounded-3 p-2 bg-light small sources-scroll"></div>
+                </div>
+                <div class="col-6">
+                  <label class="form-label">Results / source</label>
+                  <input type="number" min="1" max="25" class="form-control" id="limit" value="5">
+                </div>
+                <div class="col-12">
+                  <button class="btn btn-primary w-100" type="submit">Run search</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <div class="card shadow-sm rounded-4 mt-4">
+            <div class="card-body">
+              <h2 class="h5">2) Create / edit intake</h2>
+              <form id="intake-form" class="row g-2">
+                <input type="hidden" id="intake-id">
+                <div class="col-12"><input class="form-control" id="i-compound" placeholder="Compound" required></div>
+                <div class="col-12"><input class="form-control" id="i-title" placeholder="Title" required></div>
+                <div class="col-6"><input class="form-control" id="i-source_database" placeholder="Primary source database" required></div>
+                <div class="col-6"><input class="form-control" id="i-publication_year" placeholder="Publication year"></div>
+                <div class="col-12"><input class="form-control" id="i-source_url" placeholder="Primary source URL"></div>
+                <div class="col-12"><input class="form-control" id="i-authors" placeholder="Authors"></div>
+                <div class="col-6"><input class="form-control" id="i-journal" placeholder="Journal / source"></div>
+                <div class="col-6"><input class="form-control" id="i-study_type" placeholder="Study type"></div>
+                <div class="col-4"><input class="form-control" id="i-doi" placeholder="DOI"></div>
+                <div class="col-4"><input class="form-control" id="i-pmid" placeholder="PMID"></div>
+                <div class="col-4"><input class="form-control" id="i-nct_id" placeholder="NCT ID"></div>
+                <div class="col-4"><input class="form-control" id="i-fda_identifier" placeholder="FDA ID"></div>
+                <div class="col-4"><input class="form-control" id="i-pubchem_cid" placeholder="PubChem CID"></div>
+                <div class="col-4"><input class="form-control" id="i-smiles" placeholder="SMILES"></div>
+                <div class="col-6"><input class="form-control" id="i-ich_m7_relevance" placeholder="ICH M7 relevance"></div>
+                <div class="col-6 d-flex align-items-center"><div class="form-check mt-2"><input class="form-check-input" type="checkbox" id="i-glp_compliant"><label class="form-check-label">GLP compliant</label></div></div>
+                <div class="col-4"><input class="form-control" id="i-species" placeholder="Species"></div>
+                <div class="col-4"><input class="form-control" id="i-route_of_administration" placeholder="Route"></div>
+                <div class="col-4"><input class="form-control" id="i-dosage" placeholder="Dosage"></div>
+                <div class="col-4"><input class="form-control" id="i-exposure_duration" placeholder="Exposure duration"></div>
+                <div class="col-4"><input class="form-control" id="i-toxicology_endpoint" placeholder="Toxicology endpoint"></div>
+                <div class="col-4"><input class="form-control" id="i-noael" placeholder="NOAEL"></div>
+                <div class="col-4"><input class="form-control" id="i-loel" placeholder="LOEL"></div>
+                <div class="col-4"><input class="form-control" id="i-data_quality_score" placeholder="Quality score"></div>
+                <div class="col-4"><input class="form-control" id="i-reference_grade" placeholder="Reference grade"></div>
+                <div class="col-4"><input class="form-control" id="i-reviewer_name" placeholder="Reviewer"></div>
+                <div class="col-12"><textarea class="form-control" id="i-key_findings" rows="3" placeholder="Key findings"></textarea></div>
+                <div class="col-12"><textarea class="form-control" id="i-data_quality_rationale" rows="2" placeholder="Data quality rationale"></textarea></div>
+                <div class="col-12">
+                  <label class="form-label small mb-1">Source bundle (multiple studies / links under the same intake)</label>
+                  <textarea class="form-control" id="i-source_bundle" rows="4" placeholder="One line per source: source | title | url | authors"></textarea>
+                </div>
+                <div class="col-12"><textarea class="form-control" id="i-extraction_notes" rows="2" placeholder="Extraction notes"></textarea></div>
+                <div class="col-6"><select class="form-select" id="i-status"><option value="draft">draft</option><option value="review">review</option><option value="approved">approved</option></select></div>
+                <div class="col-6 d-grid"><button class="btn btn-success" type="submit">Save intake</button></div>
+              </form>
+            </div>
+          </div>
+        </div>
+
+        <div class="col-lg-7">
+          <div class="card shadow-sm rounded-4 mb-4">
+            <div class="card-body">
+              <h2 class="h5">Search results</h2>
+              <div id="results" class="small text-muted">No search run yet.</div>
+            </div>
+          </div>
+          <div class="card shadow-sm rounded-4">
+            <div class="card-body">
+              <h2 class="h5">Saved intakes</h2>
+              <div id="intakes" class="small text-muted">Loading…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>
