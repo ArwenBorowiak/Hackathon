@@ -3,24 +3,19 @@ const SOURCE_OPTIONS = [
   { key: "clinicaltrials.gov", label: "ClinicalTrials.gov", checked: true },
   { key: "pubchem", label: "PubChem", checked: true },
 
-  // 20+ UI sources (jump-off)
   { key: "fda", label: "FDA", checked: true },
   { key: "who", label: "WHO", checked: true },
   { key: "ema", label: "EMA", checked: false },
   { key: "nih", label: "NIH", checked: false },
   { key: "europe-pmc", label: "Europe PMC", checked: false },
   { key: "harvard", label: "Harvard Studies", checked: false },
-  { key: "university", label: "University Studies", checked: false },
-  { key: "tox", label: "Toxicology Literature", checked: false },
-  { key: "ich", label: "ICH Guidance", checked: false },
-  { key: "google", label: "Google Web", checked: false },
-  { key: "manual", label: "Manual Reference", checked: false }
+  { key: "google", label: "Google", checked: false }
 ];
 
 let allResults = [];
-let displayLimit = 10;
+let selectedArticles = [];
 
-// ✅ RENDER SOURCES (THIS WAS BROKEN BEFORE)
+// ---------- RENDER SOURCES ----------
 function renderSources() {
   const box = document.getElementById("sources-box");
 
@@ -35,42 +30,91 @@ function renderSources() {
   `).join("");
 }
 
-// ✅ GET SELECTED SOURCES
+// ---------- GET SOURCES ----------
 function getSelectedSources() {
   return [...document.querySelectorAll(".source-check:checked")]
     .map(x => x.value);
 }
 
-// ✅ BUILD JUMP LINK (GOOGLE STYLE)
+// ---------- BUILD SEARCH LINKS ----------
 function buildLink(source, compound, keywords) {
   const query = `${compound} ${keywords}`;
-
   return `https://www.google.com/search?q=${encodeURIComponent(query + " " + source)}`;
 }
 
-// ✅ RENDER RESULTS (RESTORED CARD STYLE)
-function renderResults() {
-  const container = document.getElementById("results");
+// ---------- SAVE TO INTAKE ----------
+function addToIntake(item) {
+  const id = item.title + item.source_url;
 
-  if (!allResults.length) {
-    container.innerHTML = `<div class="text-muted">No results</div>`;
+  if (!selectedArticles.some(a => a.id === id)) {
+    selectedArticles.push({
+      id: id,
+      title: item.title,
+      url: item.source_url,
+      source: item.source_database
+    });
+  }
+
+  renderIntake();
+}
+
+// ---------- RENDER INTAKE ----------
+function renderIntake() {
+  const box = document.getElementById("selected-articles");
+
+  if (!selectedArticles.length) {
+    box.innerHTML = "No articles selected yet.";
     return;
   }
 
-  container.innerHTML = allResults.slice(0, displayLimit).map(item => `
+  box.innerHTML = selectedArticles.map((a, i) => `
+    <div class="border p-2 mb-2 bg-white">
+      <b>Article ${i + 1}:</b> ${a.title}<br>
+      <a href="${a.url}" target="_blank">Open article</a>
+    </div>
+  `).join("");
+}
+
+// ---------- ADD MANUAL LINK ----------
+function addManualLink() {
+  const url = document.getElementById("manual-link").value;
+
+  if (!url) {
+    alert("Paste a link first");
+    return;
+  }
+
+  selectedArticles.push({
+    id: url,
+    title: "Manual article",
+    url: url,
+    source: "manual"
+  });
+
+  document.getElementById("manual-link").value = "";
+  renderIntake();
+}
+
+// ---------- RENDER RESULTS ----------
+function renderResults() {
+  const container = document.getElementById("results");
+
+  container.innerHTML = allResults.map(item => `
     <div class="result-card border rounded-3 p-3 mb-3 bg-white">
-      <div class="d-flex justify-content-between align-items-start">
+      <div class="d-flex justify-content-between">
         <div>
-          <div class="fw-semibold">${item.title}</div>
-          <div class="small text-muted">${item.source_database}</div>
-          <div class="small">${item.snippet || ""}</div>
+          <b>${item.title}</b><br>
+          <small>${item.source_database}</small><br>
+          <small>${item.snippet || ""}</small>
         </div>
-        <div class="d-flex gap-2">
-          <a href="${item.source_url}" target="_blank"
-             class="btn btn-sm btn-outline-primary">
+
+        <div class="d-flex gap-2 flex-wrap">
+          <a href="${item.source_url}" target="_blank" class="btn btn-outline-primary btn-sm">
             Open article
           </a>
-          <button class="btn btn-sm btn-primary">
+
+          <button class="btn btn-primary btn-sm"
+                  onclick='addToIntake(${JSON.stringify(item)})'>
             Save to intake
           </button>
         </div>
@@ -79,22 +123,21 @@ function renderResults() {
   `).join("");
 }
 
-// ✅ MAIN SEARCH
+// ---------- SEARCH ----------
 async function runSearch(e) {
   e.preventDefault();
 
   const compound = document.getElementById("compound").value;
   const keywords = document.getElementById("keywords").value;
-  const selectedSources = getSelectedSources();
+  const sources = getSelectedSources();
 
-  // ✅ backend (real data)
   const res = await fetch("/api/search", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
       compound,
       keywords: keywords.split(","),
-      sources: ["pubmed","clinicaltrials.gov","pubchem"],
+      sources: ["pubmed", "clinicaltrials.gov", "pubchem"],
       limit_per_source: 5
     })
   });
@@ -103,8 +146,8 @@ async function runSearch(e) {
 
   allResults = data.results || [];
 
-  // ✅ add jump-off sources (this gives you 20+ again)
-  selectedSources.forEach(src => {
+  // add jump links
+  sources.forEach(src => {
     if (!["pubmed","clinicaltrials.gov","pubchem"].includes(src)) {
       allResults.push({
         title: `Search ${src} for ${compound}`,
@@ -118,11 +161,22 @@ async function runSearch(e) {
   renderResults();
 }
 
-// ✅ INIT (CRITICAL LINE YOU WERE MISSING)
+// ---------- INIT ----------
 document.addEventListener("DOMContentLoaded", () => {
   renderSources();
 
   document
     .getElementById("search-form")
     .addEventListener("submit", runSearch);
+
+  // ✅ Inject manual link UI
+  const intakeBox = document.getElementById("selected-articles");
+  intakeBox.insertAdjacentHTML("beforebegin", `
+    <div class="mb-2">
+      <input id="manual-link" class="form-control" placeholder="Paste external article link here">
+      <button onclick="addManualLink()" class="btn btn-outline-primary btn-sm mt-2">
+        Add link to intake
+      </button>
+    </div>
+  `);
 });
